@@ -1,8 +1,9 @@
-import socket
+"""Task Management API: a minimal FastAPI application used for the DevOps labs."""
 
+import socket
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -24,11 +25,17 @@ app.add_middleware(
 # Models
 # ---------------------------------------------------------------------------
 
+
 class Operands(BaseModel):
+    """Two numeric operands for the arithmetic endpoints."""
+
     a: float
     b: float
 
+
 class Item(BaseModel):
+    """An item stored in memory."""
+
     name: str
     description: Optional[str] = None
 
@@ -46,12 +53,20 @@ items: Dict[int, Item] = {
 
 @app.get("/")
 def root() -> dict:
+    """Health check: confirms the application is running."""
     return {"message": "it works !"}
 
 
 @app.get("/addition")
 def addition(a: int, b: int) -> dict:
+    """Return the sum of a and b."""
     return {"result a+b=": a + b, "developer": "Dev1"}
+
+
+@app.get("/soustraction")
+def soustraction(a: int, b: int) -> dict:
+    """Return the difference a - b."""
+    return {"result a-b=": a - b, "developer": "Dev1"}
 
 
 def current_ip() -> str:
@@ -68,6 +83,7 @@ def current_ip() -> str:
 
 @app.get("/greeting")
 def greeting(name: str) -> dict:
+    """Greet the caller and report the host name and IP of the server."""
     return {
         "message": f"Hello, {name}",
         "developer": "Dev2",
@@ -78,22 +94,27 @@ def greeting(name: str) -> dict:
 
 @app.post("/multiply")
 def multiply(op: Operands) -> dict:
+    """Return the product of the two operands."""
     return {"result a*b=": op.a * op.b, "developer": "Dev1"}
 
 
 @app.post("/divide")
 def divide(op: Operands) -> dict:
+    """Return a / b, or HTTP 400 when b is zero."""
     if op.b == 0:
         raise HTTPException(status_code=400, detail="Division by zero")
     return {"result a/b=": op.a / op.b, "developer": "Dev2"}
 
+
 @app.get("/items")
 def list_items() -> List[dict]:
+    """List every stored item with its id."""
     return [{"id": k, **v.model_dump()} for k, v in items.items()]
 
 
 @app.delete("/remove/{item_id}")
 def remove(item_id: int) -> dict:
+    """Delete an item by id, or HTTP 404 when it does not exist."""
     if item_id not in items:
         raise HTTPException(status_code=404, detail="Item not found")
     del items[item_id]
