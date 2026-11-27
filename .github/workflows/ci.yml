@@ -1,0 +1,101 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- code_quality
+  pylint:
+    name: code_quality / pylint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      # Fails the job (and the workflow) if the score is below 10/10.
+      - run: uv run pylint --fail-under=10 main.py test_main.py
+
+  # ------------------------------------------------------------------------ test
+  run-test:
+    name: test / run-test
+    needs: pylint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -v --junitxml=report.xml
+      - name: Test summary
+        if: always()
+        run: |
+          uv run python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          suite = ET.parse("report.xml").getroot().find("testsuite")
+          total, failures, errors, skipped = (int(suite.get(k)) for k in ("tests", "failures", "errors", "skipped"))
+          print("## Tests")
+          print(f"**{total - failures - errors - skipped}/{total} passed** "
+                f"({failures} failures, {errors} errors, {skipped} skipped) in {float(suite.get('time')):.2f}s")
+          EOF
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: report.xml
+          retention-days: 7
+
+  calculate-coverage:
+    name: test / calculate-coverage
+    needs: pylint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -v --cov=. --cov-report term --cov-report xml:coverage.xml --cov-report html
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "## Coverage" >> "$GITHUB_STEP_SUMMARY"
+          uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------- deploy
+  # Continuous deployment to Render: only on a push to main, only after
+  # code_quality and test passed.
+  deploy-render:
+    name: deploy / render
+    needs: [run-test, calculate-coverage]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_URL secret is not set, skipping deploy"
+            exit 0
+          fi
+          curl --fail --silent --show-error -X POST "$RENDER_DEPLOY_HOOK_URL"

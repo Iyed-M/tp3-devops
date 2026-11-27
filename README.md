@@ -1,7 +1,7 @@
 # TP3 – Intégration Continue
 
 A minimal **FastAPI** application from the *Plateforme collaborative et intégration continue (DevOps)* lab (ISIMS – A.U. 2026-2027).
-TP3 adds a **subtraction** feature, **unit tests**, **code coverage**, **code-quality scanning (Pylint)**, and a **GitLab CI pipeline** that runs all of them on every push. It also adds a **deployment to Render** that runs only on `main`.
+TP3 adds a **subtraction** feature, **unit tests**, **code coverage**, **code-quality scanning (Pylint)**, and a **CI pipeline (GitHub Actions)** that runs all of them on every push. It also adds a **deployment to Render** that runs only on `main`.
 
 ## Endpoints
 
@@ -44,22 +44,24 @@ Tests live in `test_main.py` and use FastAPI's `TestClient` ([docs](https://fast
 
 With only the first subtraction test, `pytest --cov` reported **63 % for `main.py`** (19 of 51 statements missed). The module-level code ran, but every route body except `/` and `/soustraction` never ran, so a bug in `/divide` or `/remove` would not have been caught. Coverage shows *which* code no test exercises. It does not prove the tested code is correct. Adding tests for each endpoint and each error branch raised it to **100 %**.
 
-## CI/CD pipeline (`.gitlab-ci.yml`)
+## CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
+
+The TP asks for a GitLab pipeline; this project runs the same stages on **GitHub Actions**. Jobs are chained with `needs:` to reproduce the GitLab stages.
 
 ```
-code_quality ──► test ──────────────────► deploy (main only)
+code_quality ──► test ──────────────────► deploy (push to main only)
   pylint          run-test                 deploy-render
                   calculate-coverage
 ```
 
 | Stage | Job | What it does |
 |---|---|---|
-| `code_quality` | `pylint` | `pylint --fail-under=10`: the pipeline fails if the score drops below 10/10 |
-| `test` | `run-test` | Runs pytest and publishes `report.xml` as a **JUnit artifact** (pipeline **Tests** tab) |
-| `test` | `calculate-coverage` | Runs pytest with coverage. The `coverage:` regex shows the % in the **Jobs** list and the MR. `coverage.xml` (Cobertura) and `htmlcov/` are kept as artifacts |
-| `deploy` | `deploy-render` | Calls the Render deploy hook. Runs only on the default branch, only if every previous job passed |
+| `code_quality` | `pylint` | `pylint --fail-under=10`: the workflow fails if the score drops below 10/10 |
+| `test` | `run-test` | Runs pytest, writes a pass/fail summary on the run page, and uploads `report.xml` (JUnit) as the **`junit-report`** artifact |
+| `test` | `calculate-coverage` | Runs pytest with coverage, writes the coverage table on the run page, and uploads `coverage.xml` + `htmlcov/` as the **`coverage-report`** artifact |
+| `deploy` | `deploy-render` | Calls the Render deploy hook. Runs only on a push to `main`, only if every previous job passed |
 
-Python jobs use the `ghcr.io/astral-sh/uv:python3.11-bookworm-slim` image and install the exact versions from `uv.lock` (`uv sync --frozen`). The uv cache is shared between pipelines.
+The workflow runs on every push (any branch) and on every pull request to `main`. Jobs install Python 3.11 and the exact versions from `uv.lock` with `astral-sh/setup-uv` (`uv sync --frozen`), with the uv cache enabled. Artifacts are kept for 7 days and can be downloaded from the run page.
 
 ### Git workflow used
 
@@ -67,7 +69,7 @@ Python jobs use the `ghcr.io/astral-sh/uv:python3.11-bookworm-slim` image and in
 git checkout -b feature/soustraction-with-unit-tests
 # code + tests, verify locally (pytest, coverage, pylint)
 git push -u origin feature/soustraction-with-unit-tests
-# pipeline green on the branch → open a Merge Request → merge → pipeline runs again on main (+ deploy)
+# workflow green on the branch → open a Pull Request → merge → workflow runs again on main (+ deploy)
 ```
 
 ## Deployment on Render (free tier)
@@ -76,8 +78,8 @@ Render service settings (Web Service, *Free* instance):
 
 - **Build command:** `pip install uv && uv sync --frozen --no-dev`
 - **Start command:** `.venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT`
-- **Auto-Deploy:** *Off*. The GitLab pipeline triggers the deploy through the **Deploy Hook**, so code that fails Pylint or the tests is never deployed.
-- GitLab → *Settings → CI/CD → Variables*: `RENDER_DEPLOY_HOOK_URL` (masked).
+- **Auto-Deploy:** *Off*. The GitHub Actions workflow triggers the deploy through the **Deploy Hook**, so code that fails Pylint or the tests is never deployed.
+- GitHub → *Settings → Secrets and variables → Actions → New repository secret*: `RENDER_DEPLOY_HOOK_URL`.
 
 A free instance sleeps after ~15 min without traffic, so the first request after that takes a while to respond. The `items` store is in memory and resets on every restart.
 
@@ -90,10 +92,10 @@ Un test unitaire vérifie automatiquement qu'une petite partie du code (ici un e
 La couverture indique quelles lignes sont exécutées par les tests. Une ligne non couverte peut être modifiée ou cassée sans qu'aucun test n'échoue : la régression passe inaperçue. Un taux élevé (> 90 %) garantit que presque tout le code est exécuté à chaque pipeline. Toute modification qui change le comportement d'une partie couverte fait alors échouer un test avant le merge. Le rapport HTML montre précisément les lignes et branches oubliées. Attention cependant : 100 % de couverture ne garantit pas l'absence de bugs, il faut aussi de bonnes assertions.
 
 **3. Est-ce que le fait de créer un repository pour chaque développeur est une bonne pratique ?**
-Non. L'intégration continue repose sur **un dépôt central partagé**, où le code de tous est intégré et vérifié par le même pipeline. Avec un dépôt par développeur, on intègre rarement, les divergences s'accumulent et les conflits deviennent énormes (« integration hell »). Les tests ne valident jamais le code réel combiné. Chaque développeur travaille plutôt sur une **branche** du même dépôt (ou un fork qui ouvre des merge requests vers le dépôt central).
+Non. L'intégration continue repose sur **un dépôt central partagé**, où le code de tous est intégré et vérifié par le même pipeline. Avec un dépôt par développeur, on intègre rarement, les divergences s'accumulent et les conflits deviennent énormes (« integration hell »). Les tests ne valident jamais le code réel combiné. Chaque développeur travaille plutôt sur une **branche** du même dépôt (ou un fork qui ouvre des pull requests vers le dépôt central).
 
 **4. Faut-il merger fréquemment sur main ou laisser le travail de chaque développeur sur une branche séparée ?**
-Il faut merger **fréquemment**, via des branches de fonctionnalité **courtes** (quelques heures à quelques jours). Chaque merge passe par une merge request dont le pipeline (Pylint, tests, couverture) est vert. De petits changements fréquents donnent des conflits rares et simples, des bugs faciles à localiser et une branche `main` toujours déployable. Les branches longues font exactement l'inverse et vont à l'encontre du principe même de l'intégration continue.
+Il faut merger **fréquemment**, via des branches de fonctionnalité **courtes** (quelques heures à quelques jours). Chaque merge passe par une pull request dont le pipeline (Pylint, tests, couverture) est vert. De petits changements fréquents donnent des conflits rares et simples, des bugs faciles à localiser et une branche `main` toujours déployable. Les branches longues font exactement l'inverse et vont à l'encontre du principe même de l'intégration continue.
 
 ## Project structure
 
@@ -101,7 +103,7 @@ Il faut merger **fréquemment**, via des branches de fonctionnalité **courtes**
 .
 ├── main.py          # FastAPI application
 ├── test_main.py     # Unit tests (pytest + TestClient)
-├── .gitlab-ci.yml   # CI/CD pipeline: pylint → tests + coverage → deploy
+├── .github/workflows/ci.yml  # CI/CD: pylint → tests + coverage → deploy
 ├── pyproject.toml   # Dependencies (app + dev group: pytest, pytest-cov, pylint)
 ├── uv.lock          # Locked versions
 └── README.md
