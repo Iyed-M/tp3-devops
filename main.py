@@ -1,4 +1,4 @@
-"""Task Management API: a minimal FastAPI application used for the DevOps labs."""
+"""Task Management API: a minimal FastAPI application used for the DevOps labs With CI-CD."""
 
 import socket
 from typing import Dict, List, Optional
